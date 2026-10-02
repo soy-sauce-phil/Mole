@@ -285,3 +285,23 @@ EOF
     local limit_ms="${MOLE_PERF_SECTION_LIMIT_MS:-2000}"
     [ "$elapsed" -lt "$limit_ms" ]
 }
+
+@test "should_protect_path stays fast for many files under one container" {
+    # A large app cache (4,514 Folo Cache_Data entries on one Mac) is checked
+    # file by file; the per-call cost decides how long `mo clean` sits silent.
+    # Timed in a child bash: Bats' DEBUG trap would dominate an in-process loop.
+    local limit_ms="${MOLE_PERF_PROTECT_PATH_LIMIT_MS:-3000}"
+    run /bin/bash -c '
+        source "$1/lib/core/base.sh"
+        source "$1/lib/core/app_protection.sh"
+        base="$HOME/Library/Containers/is.follow/Data/Library/Application Support/Folo/Cache/Cache_Data/f_"
+        should_protect_path "${base}warmup" || true
+        start=$(date +%s%N)
+        for i in {1..300}; do should_protect_path "${base}${i}" || true; done
+        end=$(date +%s%N)
+        echo $(((end - start) / 1000000))
+    ' _ "$PROJECT_ROOT"
+    [ "$status" -eq 0 ]
+    echo "elapsed=${output}ms limit=${limit_ms}ms"
+    [ "$output" -lt "$limit_ms" ]
+}

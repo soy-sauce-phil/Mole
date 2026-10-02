@@ -168,8 +168,22 @@ official_uninstaller_vendor() {
     return 1
 }
 
-# Check if application data should be protected during cleanup
+# Check if application data should be protected during cleanup.
+# Pure function of its argument and the readonly pattern arrays, so the last
+# answer is reused: cleaning one container asks about the same bundle id for
+# every file it holds.
 should_protect_data() {
+    if [[ -n "${_MOLE_SPD_LAST_ARG+x}" && "$1" == "$_MOLE_SPD_LAST_ARG" ]]; then
+        return "$_MOLE_SPD_LAST_RC"
+    fi
+    local _spd_rc=0
+    _should_protect_data_uncached "$1" || _spd_rc=$?
+    _MOLE_SPD_LAST_ARG="$1"
+    _MOLE_SPD_LAST_RC=$_spd_rc
+    return "$_spd_rc"
+}
+
+_should_protect_data_uncached() {
     local bundle_id="$1"
 
     case "$bundle_id" in
