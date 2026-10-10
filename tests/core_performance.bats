@@ -305,3 +305,59 @@ EOF
     echo "elapsed=${output}ms limit=${limit_ms}ms"
     [ "$output" -lt "$limit_ms" ]
 }
+
+@test "should_protect_path asks about a container's bundle id once per run of siblings" {
+    # Step 3 asks about the container bundle id and step 7 about the file
+    # name; the file-name check must not evict the remembered bundle answer.
+    run /bin/bash -c '
+        source "$1/lib/core/base.sh"
+        source "$1/lib/core/app_protection.sh"
+        calls=0
+        eval "$(declare -f _should_protect_data_uncached | sed "1s/_should_protect_data_uncached/_orig_spd_uncached/")"
+        _should_protect_data_uncached() { calls=$((calls + 1)); _orig_spd_uncached "$@"; }
+        base="$HOME/Library/Containers/is.follow/Data/Library/Application Support/Folo/Cache/Cache_Data/f_"
+        for i in 1 2 3; do should_protect_path "${base}${i}" || true; done
+        echo "$calls"
+    ' _ "$PROJECT_ROOT"
+    [ "$status" -eq 0 ]
+    echo "uncached calls: $output"
+    [ "$output" -eq 4 ]
+}
+
+@test "absolute-path protection patterns match exactly what the full list matches" {
+    # Step 6 of should_protect_path only tries patterns that can match a
+    # string starting with "/". This proves the subset loses no match: every
+    # corpus path and a path built from every pattern gets the same answer.
+    run /bin/bash -c '
+        source "$1/lib/core/base.sh"
+        source "$1/lib/core/app_protection.sh"
+        paths=()
+        while IFS= read -r line; do
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            paths+=("$line")
+        done < "$1/tests/fuzz_corpus/dangerous_paths.txt"
+        for p in "${SYSTEM_CRITICAL_BUNDLES[@]}" "${DATA_PROTECTED_BUNDLES[@]}"; do
+            literal="${p//\*/x}"; literal="${literal//\?/y}"
+            paths+=("/Users/u/Library/Caches/$literal" "/Users/u/Library/Caches/$literal/f" "/$literal")
+        done
+        paths+=("$HOME/Library/Containers/is.follow/Data/Library/Application Support/Folo/Cache/Cache_Data/f_1")
+        mismatches=0
+        for path in "${paths[@]}"; do
+            full=1; subset=1
+            for pattern in "${SYSTEM_CRITICAL_BUNDLES[@]}" "${DATA_PROTECTED_BUNDLES[@]}"; do
+                [[ -n "$pattern" && "$path" == $pattern ]] && { full=0; break; }
+            done
+            for pattern in "${_MOLE_ABSOLUTE_PROTECT_PATTERNS[@]}"; do
+                [[ -n "$pattern" && "$path" == $pattern ]] && { subset=0; break; }
+            done
+            [[ $full -eq $subset ]] || { mismatches=$((mismatches + 1)); echo "MISMATCH $path" >&2; }
+        done
+        echo "${#paths[@]} $mismatches ${#_MOLE_ABSOLUTE_PROTECT_PATTERNS[@]}"
+    ' _ "$PROJECT_ROOT"
+    [ "$status" -eq 0 ]
+    echo "paths mismatches subset: $output"
+    read -r count mismatches subset <<< "${lines[${#lines[@]}-1]}"
+    [ "$count" -gt 1000 ]
+    [ "$subset" -gt 0 ]
+    [ "$mismatches" -eq 0 ]
+}

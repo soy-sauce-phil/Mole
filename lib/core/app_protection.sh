@@ -30,6 +30,22 @@ fi
 # shellcheck source=lib/core/app_protection_data.sh
 source "$_MOLE_CORE_DIR/app_protection_data.sh"
 
+# The cleanup-mode protected patterns that can match an absolute path. A glob
+# whose first character is a plain literal other than "/" can never match a
+# string that starts with "/" (case folding cannot turn "/" into a letter), so
+# step 6 of should_protect_path only needs patterns that start with "/" or a
+# glob/escape/extglob character. Built once; equivalence is pinned by
+# tests/core_performance.bats.
+_MOLE_ABSOLUTE_PROTECT_PATTERNS=()
+for _mole_protect_pattern in "${SYSTEM_CRITICAL_BUNDLES[@]}" "${DATA_PROTECTED_BUNDLES[@]}"; do
+    case "${_mole_protect_pattern:0:1}" in
+        "/" | "*" | "?" | "[" | "\\" | "@" | "!" | "+")
+            _MOLE_ABSOLUTE_PROTECT_PATTERNS+=("$_mole_protect_pattern")
+            ;;
+    esac
+done
+unset _mole_protect_pattern
+
 # Return 0 when Xcode/build tooling is active, 1 after reliable no-match
 # results, and 2 when process ownership cannot be established.
 xcode_build_tooling_process_state() {
@@ -656,19 +672,27 @@ should_protect_path() {
             done
         else
             # Normal mode (cleanup): protect both system-critical and data-protected bundles
-            for pattern in "${SYSTEM_CRITICAL_BUNDLES[@]}" "${DATA_PROTECTED_BUNDLES[@]}"; do
-                # shellcheck disable=SC2053 # unquoted RHS is the glob, as in bundle_matches_pattern
-                if [[ -n "$pattern" && "$path" == $pattern ]]; then
-                    return 0
-                fi
-            done
+            if [[ "$path" == /* ]]; then
+                # Only patterns able to match an absolute path (see above).
+                for pattern in "${_MOLE_ABSOLUTE_PROTECT_PATTERNS[@]}"; do
+                    # shellcheck disable=SC2053  # glob pattern matching is intended
+                    [[ -n "$pattern" && "$path" == $pattern ]] && return 0
+                done
+            else
+                for pattern in "${SYSTEM_CRITICAL_BUNDLES[@]}" "${DATA_PROTECTED_BUNDLES[@]}"; do
+                    # shellcheck disable=SC2053  # glob pattern matching is intended
+                    [[ -n "$pattern" && "$path" == $pattern ]] && return 0
+                done
+            fi
         fi
 
         # 7. Check if the filename itself matches any protected patterns
         # Skip in uninstall mode - user explicitly chose to remove this app
         if [[ "${MOLE_UNINSTALL_MODE:-0}" != "1" ]]; then
             local filename="${path##*/}"
-            if should_protect_data "$filename"; then
+            # Uncached on purpose: file names differ per item, and caching
+            # them would evict the container bundle id remembered in step 3.
+            if _should_protect_data_uncached "$filename"; then
                 return 0
             fi
         fi
