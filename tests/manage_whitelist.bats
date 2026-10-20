@@ -1299,3 +1299,30 @@ SH
     [[ "$output" == *"absence could not be verified"* ]] || { echo "$output"; return 1; }
     [[ "$output" == *"invalid path or broken link"* ]] || { echo "$output"; return 1; }
 }
+
+@test "MOLE_EXTRA_WHITELIST_FILE adds one-run protections without touching the saved file" {
+    mkdir -p "$HOME/.config/mole"
+    printf '%s\n' "$HOME/Library/Caches/kept-by-user" > "$WHITELIST_PATH"
+    extra="$HOME/extra-whitelist"
+    printf '%s\n' "$HOME/Library/Caches/skip-this-run" "relative/ignored" "$HOME/a/../b" "" > "$extra"
+    before=$(cat "$WHITELIST_PATH")
+
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_EXTRA_WHITELIST_FILE="$extra" \
+        /bin/bash --noprofile --norc <<'EOF2'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/base.sh"
+source "$PROJECT_ROOT/lib/core/app_protection.sh"
+load_mole_whitelist "$HOME"
+is_path_whitelisted "$HOME/Library/Caches/skip-this-run/file" && echo "extra-child-protected"
+is_path_whitelisted "$HOME/Library/Caches/kept-by-user" && echo "user-protected"
+is_path_whitelisted "$HOME/Library/Caches/other" || echo "other-not-protected"
+for p in "${WHITELIST_PATTERNS[@]}"; do [[ "$p" == *ignored* || "$p" == *..* ]] && echo "BAD $p"; done
+true
+EOF2
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"extra-child-protected"* ]] || return 1
+    [[ "$output" == *"user-protected"* ]] || return 1
+    [[ "$output" == *"other-not-protected"* ]] || return 1
+    [[ "$output" != *"BAD"* ]] || return 1
+    [ "$(cat "$WHITELIST_PATH")" = "$before" ]
+}

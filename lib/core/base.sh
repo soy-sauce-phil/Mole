@@ -530,6 +530,23 @@ load_mole_whitelist() {
         WHITELIST_PATTERNS=("${DEFAULT_WHITELIST_PATTERNS[@]}")
     fi
 
+    # One-run extra protections (MOLE_EXTRA_WHITELIST_FILE): a GUI front end
+    # lists items the user unchecked for this run only. Entries can only add
+    # protection; the saved whitelist file is never modified. Only absolute
+    # paths without "..", globs or control characters are accepted.
+    if [[ -n "${MOLE_EXTRA_WHITELIST_FILE:-}" && -f "$MOLE_EXTRA_WHITELIST_FILE" && ! -L "$MOLE_EXTRA_WHITELIST_FILE" ]]; then
+        local extra_line
+        while IFS= read -r extra_line || [[ -n "$extra_line" ]]; do
+            [[ -z "$extra_line" || "$extra_line" == \#* ]] && continue
+            [[ "$extra_line" == /* ]] || continue
+            [[ "$extra_line" =~ \.\. || "$extra_line" =~ [[:cntrl:]] || "$extra_line" =~ // ]] && continue
+            case "$extra_line" in
+                *\** | *\?* | *\[*) continue ;;
+            esac
+            WHITELIST_PATTERNS+=("${extra_line%/}")
+        done < "$MOLE_EXTRA_WHITELIST_FILE"
+    fi
+
     # Expand patterns once, before hot cleanup loops call is_path_whitelisted.
     if [[ ${#WHITELIST_PATTERNS[@]} -gt 0 ]]; then
         local -a expanded_patterns=()
